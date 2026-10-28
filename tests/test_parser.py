@@ -43,3 +43,22 @@ def test_parses_access_log_format():
     assert rec.endpoint == "/api/orders/883"
     assert rec.status == 500
     assert rec.level == "ERROR"
+    assert rec.timestamp.isoformat() == "2026-07-04T12:03:11"
+
+
+def test_parses_structured_json_and_normalizes_utc_timestamp():
+    line = (
+        '{"timestamp":"2026-07-04T14:30:00+05:30","level":"info",'
+        '"service":"orders","method":"GET","path":"/api/orders/1",'
+        '"status_code":500,"duration_ms":198,"message":"KeyError: missing"}'
+    )
+    rec = parse_line(line)
+    assert rec is not None
+    assert rec.timestamp.isoformat() == "2026-07-04T09:00:00"
+    assert rec.level == "ERROR"
+    assert rec.endpoint == "/api/orders/1"
+    assert rec.duration_ms == 198
+
+
+def test_skips_invalid_structured_json():
+    assert parse_line('{"timestamp":"not-a-date","message":"boom"}') is None

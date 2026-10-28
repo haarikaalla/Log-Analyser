@@ -9,18 +9,25 @@ Then open http://127.0.0.1:8000  (upload or point it at a log file via ?path=)
 
 from dataclasses import asdict
 from html import escape
+import hmac
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from .parser import parse_file
 from .analyzer import analyze
+from .store import get_run, list_runs, save_run
 
 app = FastAPI(title="Log Analyzer Dashboard")
 
 DEFAULT_LOG = str(Path(__file__).resolve().parent.parent / "sample_logs" / "app.log")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 def _load_report(path: str):
@@ -31,11 +38,22 @@ def _load_report(path: str):
         raise HTTPException(status_code=403, detail="Log path is outside the allowed directory")
     if not requested.is_file():
         raise HTTPException(status_code=404, detail="Log file not found")
+    max_bytes = int(os.environ.get("LOG_ANALYZER_MAX_BYTES", "52428800"))
+    if requested.stat().st_size > max_bytes:
+        raise HTTPException(status_code=413, detail="Log file exceeds size limit")
     try:
         records = parse_file(str(requested))
     except OSError as exc:
         raise HTTPException(status_code=400, detail="Unable to read log file") from exc
     return analyze(records)
+
+
+def _require_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    expected = os.environ.get("LOG_ANALYZER_API_KEY")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Set LOG_ANALYZER_API_KEY to enable run history")
+    if x_api_key is None or not hmac.compare_digest(x_api_key, expected):
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 def _row(cells):
@@ -115,3 +133,25 @@ def dashboard(path: str = Query(default=DEFAULT_LOG, description="Path to a log 
 @app.get("/api/report")
 def api_report(path: str = Query(default=DEFAULT_LOG)):
     return asdict(_load_report(path))
+
+
+@app.post("/api/runs", dependencies=[Depends(_require_api_key)])
+def create_run(path: str = Query(default=DEFAULT_LOG)):
+    report = _load_report(path)
+    if not report.total_lines:
+        raise HTTPException(status_code=422, detail="No parseable log lines found")
+    run_id = save_run(report, path)
+    return {"id": run_id, "source_name": Path(path).name, "report": asdict(report)}
+
+
+@app.get("/api/runs", dependencies=[Depends(_require_api_key)])
+def recent_runs(limit: int = Query(default=20, ge=1, le=100)):
+    return list_runs(limit=limit)
+
+
+@app.get("/api/runs/{run_id}", dependencies=[Depends(_require_api_key)])
+def stored_run(run_id: str):
+    run = get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+    return run

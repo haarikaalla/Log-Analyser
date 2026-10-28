@@ -7,7 +7,7 @@ Takes parsed LogRecords and produces:
 """
 
 from collections import defaultdict, Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from statistics import mean, pstdev
 from typing import List, Dict, Optional
@@ -46,13 +46,15 @@ class AnalysisReport:
 
 
 def _signature(rec: LogRecord) -> str:
-    """Group similar errors together even if exact message text differs slightly."""
+    """Group matching endpoints and exception types without relying on exact IDs."""
     endpoint = rec.endpoint or "unknown"
     status = rec.status or 0
     # collapse numeric IDs in the path so /api/orders/883 and /api/orders/991 cluster together
     import re
     normalized_endpoint = re.sub(r"/\d+", "/{id}", endpoint)
-    return f"{status} {normalized_endpoint}"
+    exception = re.match(r"([A-Za-z_][A-Za-z0-9_]*(?:Error|Exception))\b", rec.message)
+    kind = f" [{exception.group(1)}]" if exception else ""
+    return f"{status} {normalized_endpoint}{kind}"
 
 
 def cluster_errors(records: List[LogRecord]) -> List[ErrorCluster]:
@@ -70,7 +72,7 @@ def cluster_errors(records: List[LogRecord]) -> List[ErrorCluster]:
                 endpoint=recs_sorted[0].endpoint,
                 status=recs_sorted[0].status,
                 count=len(recs_sorted),
-                sample_message=recs_sorted[0].message or recs_sorted[0].raw,
+                sample_message=recs_sorted[0].message or _signature(recs_sorted[0]),
                 first_seen=recs_sorted[0].timestamp,
                 last_seen=recs_sorted[-1].timestamp,
             )
@@ -97,35 +99,32 @@ def detect_anomalies(records: List[LogRecord], bucket_seconds: int = 60,
                       repeated_timeout_threshold: int = 3) -> List[Anomaly]:
     anomalies: List[Anomaly] = []
     buckets = _bucket_counts(records, bucket_seconds)
-    if len(buckets) < 3:
-        # not enough data to establish a baseline
-        totals = [v["total"] for v in buckets.values()]
-        errors = [v["errors"] for v in buckets.values()]
-    else:
-        totals = [v["total"] for v in buckets.values()]
-        errors = [v["errors"] for v in buckets.values()]
-
+    entries = list(buckets.items())
+    for index, (bucket_start, counts) in enumerate(entries):
+        if index < 5:
+            continue  # five prior observed buckets are needed for a baseline
+        history = [value for _, value in entries[max(0, index - 20):index]]
+        totals = [value["total"] for value in history]
+        errors = [value["errors"] for value in history]
         total_mean, total_std = mean(totals), pstdev(totals) or 1
         err_mean, err_std = mean(errors), pstdev(errors) or 1
-
-        for bucket_start, counts in buckets.items():
-            bucket_end = bucket_start + timedelta(seconds=bucket_seconds)
-            if counts["total"] > total_mean + spike_stddev_threshold * total_std and counts["total"] > 5:
-                anomalies.append(Anomaly(
-                    kind="traffic_spike",
-                    window_start=bucket_start,
-                    window_end=bucket_end,
-                    detail=f"{counts['total']} requests vs baseline avg {total_mean:.1f}",
-                    severity="medium",
-                ))
-            if counts["errors"] > err_mean + spike_stddev_threshold * err_std and counts["errors"] > 2:
-                anomalies.append(Anomaly(
-                    kind="error_rate_spike",
-                    window_start=bucket_start,
-                    window_end=bucket_end,
-                    detail=f"{counts['errors']} errors vs baseline avg {err_mean:.1f}",
-                    severity="high",
-                ))
+        bucket_end = bucket_start + timedelta(seconds=bucket_seconds)
+        if counts["total"] > total_mean + spike_stddev_threshold * total_std and counts["total"] > 5:
+            anomalies.append(Anomaly(
+                kind="traffic_spike",
+                window_start=bucket_start,
+                window_end=bucket_end,
+                detail=f"{counts['total']} requests vs prior avg {total_mean:.1f}",
+                severity="medium",
+            ))
+        if counts["errors"] > err_mean + spike_stddev_threshold * err_std and counts["errors"] > 2:
+            anomalies.append(Anomaly(
+                kind="error_count_spike",
+                window_start=bucket_start,
+                window_end=bucket_end,
+                detail=f"{counts['errors']} errors vs prior avg {err_mean:.1f}",
+                severity="high",
+            ))
 
     # repeated timeout detection: same endpoint timing out N+ times regardless of time bucket
     timeout_counter = Counter()
