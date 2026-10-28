@@ -11,8 +11,9 @@ Returns a list of dicts with normalized fields:
 """
 
 import re
-from datetime import datetime
-from dataclasses import dataclass, field
+import json
+from datetime import datetime, timezone
+from dataclasses import dataclass
 from typing import Optional, List
 
 
@@ -53,7 +54,57 @@ def _parse_app_timestamp(ts: str) -> datetime:
 
 def _parse_access_timestamp(ts: str) -> datetime:
     # e.g. 04/Jul/2026:12:03:11 +0000
-    return datetime.strptime(ts.split(" ")[0], "%d/%b/%Y:%H:%M:%S")
+    parsed = datetime.strptime(ts, "%d/%b/%Y:%H:%M:%S %z")
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _parse_json_line(line: str) -> Optional[LogRecord]:
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    timestamp_text = data.get("timestamp", data.get("time"))
+    if not isinstance(timestamp_text, str):
+        return None
+    try:
+        timestamp = datetime.fromisoformat(timestamp_text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+    status_value = data.get("status", data.get("status_code"))
+    if status_value is not None:
+        try:
+            status = int(status_value)
+        except (TypeError, ValueError):
+            return None
+    else:
+        status = None
+    duration_value = data.get("duration_ms")
+    if duration_value is not None:
+        try:
+            duration = int(duration_value)
+        except (TypeError, ValueError):
+            return None
+    else:
+        duration = None
+    level = str(data.get("level", "INFO")).upper()
+    if status is not None and status >= 500 and level == "INFO":
+        level = "ERROR"
+    return LogRecord(
+        timestamp=timestamp,
+        level=level,
+        service=str(data["service"]) if data.get("service") is not None else None,
+        method=str(data["method"]) if data.get("method") is not None else None,
+        endpoint=str(data.get("endpoint", data.get("path")))
+        if data.get("endpoint", data.get("path")) is not None else None,
+        status=status,
+        duration_ms=duration,
+        message=str(data.get("message", "")),
+        raw=line,
+    )
 
 
 def parse_line(line: str) -> Optional[LogRecord]:
@@ -61,6 +112,9 @@ def parse_line(line: str) -> Optional[LogRecord]:
     line = line.rstrip("\n")
     if not line.strip():
         return None
+
+    if line.lstrip().startswith("{"):
+        return _parse_json_line(line)
 
     m = APP_LOG_RE.match(line)
     if m:

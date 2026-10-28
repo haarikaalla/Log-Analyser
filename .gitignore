@@ -1,7 +1,8 @@
 __pycache__/
-*.pyc
 .pytest_cache/
-report.json
 .venv/
-venv/
 *.egg-info/
+build/
+*.db
+*.db-shm
+*.db-wal

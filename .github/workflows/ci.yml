@@ -20,4 +20,31 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -r requirements.txt
+      - run: python -m ruff check .
       - run: python -m pytest -q
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t log-analyser:ci .
+      - run: |
+          docker run -d --name log-analyser-smoke \
+            --read-only --tmpfs /tmp \
+            -v log-analyser-ci-data:/data \
+            -p 127.0.0.1:8000:8000 \
+            -e LOG_ANALYZER_API_KEY=ci-secret \
+            log-analyser:ci
+          for attempt in $(seq 1 20); do
+            if curl --silent --fail http://127.0.0.1:8000/health; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/api/report > /dev/null
+          curl --fail --silent -X POST -H 'X-API-Key: ci-secret' \
+            http://127.0.0.1:8000/api/runs > /dev/null
+      - if: always()
+        run: |
+          docker rm -f log-analyser-smoke || true
+          docker volume rm log-analyser-ci-data || true

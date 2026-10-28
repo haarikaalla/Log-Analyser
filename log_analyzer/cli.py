@@ -14,6 +14,7 @@ from datetime import datetime
 
 from .parser import parse_file
 from .analyzer import analyze
+from .store import save_run
 
 
 def _default_serializer(obj):
@@ -60,6 +61,7 @@ def main(argv=None):
     parser.add_argument("logfile", help="Path to the log file to analyze")
     parser.add_argument("--bucket-seconds", type=int, default=60, help="Time bucket size for spike detection (default: 60)")
     parser.add_argument("--json", metavar="OUTFILE", help="Also write the full report as JSON to this path")
+    parser.add_argument("--save", action="store_true", help="Save an idempotent analysis snapshot to SQLite")
     args = parser.parse_args(argv)
 
     records = parse_file(args.logfile)
@@ -74,6 +76,8 @@ def main(argv=None):
         with open(args.json, "w") as f:
             json.dump(asdict(report), f, indent=2, default=_default_serializer)
         print(f"Full report written to {args.json}")
+    if args.save:
+        print(f"Saved analysis run: {save_run(report, args.logfile)}")
 
 
 if __name__ == "__main__":
