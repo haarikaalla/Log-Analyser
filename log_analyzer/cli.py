@@ -23,6 +23,16 @@ def _default_serializer(obj):
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
+def _positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
 def print_report(report, log_path: str):
     print(f"\nLog Analyzer Report — {log_path}")
     print("=" * 60)
@@ -59,7 +69,10 @@ def print_report(report, log_path: str):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Analyze application logs for errors and anomalies.")
     parser.add_argument("logfile", help="Path to the log file to analyze")
-    parser.add_argument("--bucket-seconds", type=int, default=60, help="Time bucket size for spike detection (default: 60)")
+    parser.add_argument(
+        "--bucket-seconds", type=_positive_int, default=60,
+        help="Positive time bucket size for spike detection (default: 60)",
+    )
     parser.add_argument("--json", metavar="OUTFILE", help="Also write the full report as JSON to this path")
     parser.add_argument("--save", action="store_true", help="Save an idempotent analysis snapshot to SQLite")
     args = parser.parse_args(argv)

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import pytest
 
 from log_analyzer.parser import LogRecord
 from log_analyzer.analyzer import cluster_errors, detect_anomalies, analyze, slowest_endpoints
@@ -83,3 +84,10 @@ def test_analyze_computes_error_rate():
     assert report.total_lines == 10
     assert report.total_errors == 1
     assert report.error_rate == 10.0
+
+
+def test_invalid_analysis_intervals_are_rejected():
+    with pytest.raises(ValueError, match="bucket_seconds"):
+        analyze([], bucket_seconds=0)
+    with pytest.raises(ValueError, match="bucket_seconds"):
+        analyze([], bucket_seconds=-1)
