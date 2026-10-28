@@ -40,6 +40,9 @@ python -m log_analyzer.cli sample_logs/app.log
 # or, after installing: log-analyser sample_logs/app.log
 ```
 
+Use `--bucket-seconds N` to change the anomaly window; `N` must be a positive
+integer. Invalid values produce a clear command-line error.
+
 Use Python 3.10 or newer. The editable install exposes the `log-analyser`
 command and keeps local code changes immediately testable.
 
@@ -199,7 +202,7 @@ pip install -r requirements.txt
 pytest tests/ -v
 ```
 
-21 tests cover log parsing, analysis, dashboard HTML escaping, path isolation,
+25 tests cover log parsing, analysis, input validation, dashboard HTML escaping, path isolation,
 file-size limits, authenticated API access, and idempotent persistence. GitHub
 Actions runs lint and tests on Python 3.10 and 3.13 for every push and pull request.
 

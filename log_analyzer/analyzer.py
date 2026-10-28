@@ -97,6 +97,12 @@ def _bucket_counts(records: List[LogRecord], bucket_seconds: int = 60) -> Dict[d
 def detect_anomalies(records: List[LogRecord], bucket_seconds: int = 60,
                       spike_stddev_threshold: float = 2.0,
                       repeated_timeout_threshold: int = 3) -> List[Anomaly]:
+    if bucket_seconds <= 0:
+        raise ValueError("bucket_seconds must be greater than zero")
+    if spike_stddev_threshold < 0:
+        raise ValueError("spike_stddev_threshold cannot be negative")
+    if repeated_timeout_threshold <= 0:
+        raise ValueError("repeated_timeout_threshold must be greater than zero")
     anomalies: List[Anomaly] = []
     buckets = _bucket_counts(records, bucket_seconds)
     entries = list(buckets.items())
