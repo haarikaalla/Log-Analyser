@@ -8,10 +8,11 @@ Then open http://127.0.0.1:8000  (upload or point it at a log file via ?path=)
 """
 
 from dataclasses import asdict
-from datetime import datetime
+from html import escape
+import os
 from pathlib import Path
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from .parser import parse_file
@@ -22,17 +23,30 @@ app = FastAPI(title="Log Analyzer Dashboard")
 DEFAULT_LOG = str(Path(__file__).resolve().parent.parent / "sample_logs" / "app.log")
 
 
+def _load_report(path: str):
+    """Only serve logs from the configured directory, including through symlinks."""
+    allowed_dir = Path(os.environ.get("LOG_ANALYZER_ALLOWED_DIR", Path(DEFAULT_LOG).parent)).resolve()
+    requested = Path(path).resolve()
+    if not requested.is_relative_to(allowed_dir):
+        raise HTTPException(status_code=403, detail="Log path is outside the allowed directory")
+    if not requested.is_file():
+        raise HTTPException(status_code=404, detail="Log file not found")
+    try:
+        records = parse_file(str(requested))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail="Unable to read log file") from exc
+    return analyze(records)
+
+
 def _row(cells):
-    return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+    return "<tr>" + "".join(f"<td>{escape(str(c))}</td>" for c in cells) + "</tr>"
 
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(path: str = Query(default=DEFAULT_LOG, description="Path to a log file on disk")):
-    records = parse_file(path)
-    if not records:
-        return HTMLResponse(f"<h2>No parseable lines found in {path}</h2>", status_code=404)
-
-    report = analyze(records)
+    report = _load_report(path)
+    if report.total_lines == 0:
+        return HTMLResponse("<h2>No parseable lines found</h2>", status_code=404)
 
     cluster_rows = "".join(
         _row([c.count, c.signature, (c.sample_message or "")[:80], c.first_seen, c.last_seen])
@@ -67,7 +81,7 @@ def dashboard(path: str = Query(default=DEFAULT_LOG, description="Path to a log 
     </head>
     <body>
         <h1>Log Analyzer Dashboard</h1>
-        <div class="subtitle">Source: {path}</div>
+        <div class="subtitle">Source: {escape(path)}</div>
         <div class="stat-row">
             <div class="stat"><div class="value">{report.total_lines}</div><div class="label">Lines parsed</div></div>
             <div class="stat"><div class="value">{report.total_errors}</div><div class="label">Errors</div></div>
@@ -100,6 +114,4 @@ def dashboard(path: str = Query(default=DEFAULT_LOG, description="Path to a log 
 
 @app.get("/api/report")
 def api_report(path: str = Query(default=DEFAULT_LOG)):
-    records = parse_file(path)
-    report = analyze(records)
-    return asdict(report)
+    return asdict(_load_report(path))

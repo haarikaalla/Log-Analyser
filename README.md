@@ -44,7 +44,17 @@ uvicorn log_analyzer.dashboard:app --reload
 # open http://127.0.0.1:8000
 ```
 
-Point it at any log file: `http://127.0.0.1:8000/?path=/path/to/other.log`
+By default the web app can read only files in `sample_logs/`. For another directory,
+set `LOG_ANALYZER_ALLOWED_DIR` before starting the server:
+
+```bash
+LOG_ANALYZER_ALLOWED_DIR=/path/to/logs uvicorn log_analyzer.dashboard:app --reload
+# open http://127.0.0.1:8000/?path=/path/to/logs/app.log
+```
+
+The dashboard and `/api/report` reject paths outside that directory, including
+symlinks to outside files. Log content is escaped before display in HTML. Keep the
+server local or place it behind your own authentication and network controls.
 
 ### JSON output (for piping into other tools)
 
@@ -112,9 +122,8 @@ pip install -r requirements.txt
 pytest tests/ -v
 ```
 
-10 unit tests covering log parsing (both formats, malformed lines, level
-upgrading on 5xx) and analysis (clustering, spike/timeout detection, error
-rate calculation).
+13 tests cover log parsing, analysis, dashboard HTML escaping, path isolation,
+and missing-file handling. GitHub Actions runs the suite on every push and pull request.
 
 ## Possible extensions
 
